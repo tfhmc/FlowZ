@@ -616,7 +616,6 @@ export interface BackupInfo {
   subscriptionCount: number;
   ruleCount: number;
   ruleSetCount: number;
-  appRuleCount: number;
 }
 
 /**

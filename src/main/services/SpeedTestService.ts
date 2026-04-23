@@ -1,6 +1,6 @@
 /**
- * 速度测试服务
- * 通过临时 sing-box 实例测试代理服务器的真实延迟
+ * Speed test service
+ * Measures server latency via TCP connect.
  */
 
 import * as net from 'net';
@@ -9,20 +9,20 @@ import type { LogManager } from './LogManager';
 
 export interface SpeedTestResult {
   serverId: string;
-  latency: number | null; // null 表示超时或失败
+  latency: number | null;
   error?: string;
 }
 
 export class SpeedTestService {
   private logManager: LogManager;
-  private readonly MAX_CONCURRENT = 5; // 最多同时测试 5 个
+  private readonly MAX_CONCURRENT = 8;
 
   constructor(logManager: LogManager) {
     this.logManager = logManager;
   }
 
   /**
-   * 测试所有服务器
+   * Test all servers with a bounded worker pool.
    */
   async testAllServers(servers: ServerConfig[]): Promise<Map<string, number | null>> {
     if (servers.length === 0) {
@@ -32,14 +32,19 @@ export class SpeedTestService {
     this.logManager.addLog('info', `开始测速 ${servers.length} 个服务器`, 'SpeedTest');
 
     const results = new Map<string, number | null>();
+    let cursor = 0;
+    const workerCount = Math.min(this.MAX_CONCURRENT, servers.length);
 
-    // 分批并发测试，避免资源耗尽
-    for (let i = 0; i < servers.length; i += this.MAX_CONCURRENT) {
-      const batch = servers.slice(i, i + this.MAX_CONCURRENT);
-      const batchResults = await Promise.all(batch.map((server) => this.testServer(server)));
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= servers.length) {
+          return;
+        }
 
-      batchResults.forEach((result) => {
+        const result = await this.testServer(servers[index]);
         results.set(result.serverId, result.latency);
+
         if (result.error) {
           this.logManager.addLog(
             'warn',
@@ -47,23 +52,25 @@ export class SpeedTestService {
             'SpeedTest'
           );
         }
-      });
-    }
+      }
+    });
+
+    await Promise.all(workers);
 
     this.logManager.addLog('info', '测速完成', 'SpeedTest');
     return results;
   }
 
   /**
-   * 测试单个服务器 (TCP Ping)
+   * Test one server by TCP connect latency.
    */
   private async testServer(server: ServerConfig): Promise<SpeedTestResult> {
     const start = Date.now();
+
     try {
       await new Promise<void>((resolve, reject) => {
         const socket = new net.Socket();
-        const timeout = 5000; // 5秒超时
-
+        const timeout = 5000;
         socket.setTimeout(timeout);
 
         socket.on('connect', () => {
@@ -81,7 +88,6 @@ export class SpeedTestService {
           reject(err);
         });
 
-        // 如果是 IPv6 且带有中括号，去除中括号以供 net.Socket 使用
         const isIpv6 = server.address.includes(':');
         const connectAddress =
           isIpv6 && server.address.startsWith('[') && server.address.endsWith(']')
@@ -91,21 +97,19 @@ export class SpeedTestService {
         socket.connect({
           port: server.port,
           host: connectAddress,
-          family: isIpv6 ? 6 : 0, // 明确指定为 IPv6，避免被系统误当作 IPv4 解析抛出超时
+          family: isIpv6 ? 6 : 0,
         });
       });
 
-      const latency = Date.now() - start;
       return {
         serverId: server.id,
-        latency,
+        latency: Date.now() - start,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isConnectionRefused = errorMessage.includes('ECONNREFUSED');
 
-      // 对于基于 UDP 的协议 (如 TUIC, Hysteria2)，目标服务器通常不会监听 TCP 端口
-      // 因此会立即返回 ECONNREFUSED (TCP RST)。我们正好利用这个拒绝响应的 RTT 作为真实的延迟。
+      // UDP-first protocols often refuse TCP immediately; RTT is still useful.
       if (isConnectionRefused && (server.protocol === 'tuic' || server.protocol === 'hysteria2')) {
         return {
           serverId: server.id,

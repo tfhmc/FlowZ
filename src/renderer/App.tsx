@@ -5,7 +5,6 @@ import { useNativeEventListeners } from './hooks/use-native-events';
 import { HomePage } from './pages/home-page';
 import { ServerPage } from './pages/server-page';
 import { RulesPage } from './pages/rules-page';
-import { AppPolicyPage } from './pages/app-policy-page';
 import { SettingsPage } from './pages/settings-page';
 import { Toaster } from './components/ui/sonner';
 import { ErrorBoundary } from './components/error-boundary';
@@ -44,10 +43,11 @@ function App() {
     // Sync initial language to main process for tray menu
     api.config.setLanguage(i18n.language).catch(console.error);
 
-    // Poll connection status every 2 seconds
+    // Poll connection status periodically (skip in background tab)
     const statusInterval = setInterval(() => {
+      if (document.hidden) return;
       refreshConnectionStatus();
-    }, 2000);
+    }, 3000);
 
     return () => clearInterval(statusInterval);
   }, [loadConfig, refreshConnectionStatus]);
@@ -119,7 +119,6 @@ function App() {
       >
         {currentView === 'home' && <HomePage />}
         {currentView === 'server' && <ServerPage />}
-        {currentView === 'appPolicy' && <AppPolicyPage />}
         {currentView === 'rules' && <RulesPage />}
         {currentView === 'settings' && <SettingsPage activeSection={settingsSection} />}
       </MainLayout>

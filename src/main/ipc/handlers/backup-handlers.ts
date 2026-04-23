@@ -27,7 +27,6 @@ export interface BackupInfo {
   subscriptionCount: number;
   ruleCount: number;
   ruleSetCount: number;
-  appRuleCount: number;
 }
 
 /**
@@ -132,7 +131,6 @@ export function registerBackupHandlers(configManager: ConfigManager): void {
           subscriptionCount: restoredConfig.subscriptions?.length ?? 0,
           ruleCount: restoredConfig.customRules?.length ?? 0,
           ruleSetCount: restoredConfig.customRuleSets?.length ?? 0,
-          appRuleCount: restoredConfig.appRules?.length ?? 0,
         };
 
         return { success: true, info };
@@ -155,7 +153,6 @@ export function registerBackupHandlers(configManager: ConfigManager): void {
         subscriptionCount: config.subscriptions?.length ?? 0,
         ruleCount: config.customRules?.length ?? 0,
         ruleSetCount: config.customRuleSets?.length ?? 0,
-        appRuleCount: config.appRules?.length ?? 0,
       };
     }
   );

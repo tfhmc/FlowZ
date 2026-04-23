@@ -485,8 +485,6 @@ export class ConfigManager implements IConfigManager {
       },
 
       customRuleSets: [], // 默认空
-      appRules: [], // 应用分流规则（实验性）默认空
-
       socksPort: 2081,
       httpPort: 2080,
       logLevel: 'info',

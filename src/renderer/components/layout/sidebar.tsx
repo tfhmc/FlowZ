@@ -1,4 +1,4 @@
-import {
+﻿import {
   Home,
   Server,
   ListFilter,
@@ -10,30 +10,6 @@ import {
   Info,
   Shield,
 } from 'lucide-react';
-
-// 自定义的分流图标（完整连贯的 Y 型，不带断点）
-function FlowSplitIcon(props: any) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M12 21v-7" />
-      <path d="M12 14q0-6 9-11" />
-      <path d="M12 14q0-6-9-11" />
-      <path d="M8 3H3v5" />
-      <path d="M16 3h5v5" />
-    </svg>
-  );
-}
 import { useTranslation } from 'react-i18next';
 
 interface SidebarProps {
@@ -46,7 +22,6 @@ interface SidebarProps {
 const mainNavItems = [
   { id: 'home', icon: Home },
   { id: 'server', icon: Server },
-  { id: 'appPolicy', icon: FlowSplitIcon },
   { id: 'rules', icon: ListFilter },
 ];
 
@@ -91,7 +66,6 @@ export function Sidebar({
 
   return (
     <div className="w-[240px] sidebar h-full flex flex-col relative z-20 select-none">
-      {/* macOS traffic light spacer */}
       {isMac ? (
         <div className="h-[52px] flex-shrink-0 app-region-drag" />
       ) : (
@@ -99,9 +73,7 @@ export function Sidebar({
       )}
 
       {isSettings ? (
-        /* ── Settings sub-navigation ── */
         <>
-          {/* Back button */}
           <div className="px-2 pb-2 app-region-no-drag">
             <button
               onClick={() => onViewChange('home')}
@@ -118,7 +90,6 @@ export function Sidebar({
             </button>
           </div>
 
-          {/* Settings sub-nav items */}
           <nav className="flex-1 app-region-no-drag space-y-[6px] overflow-hidden">
             {settingsNavItems.map((item) =>
               renderNavItem(
@@ -130,7 +101,6 @@ export function Sidebar({
           </nav>
         </>
       ) : (
-        /* ── Main navigation ── */
         <>
           <nav className="flex-1 pb-2 app-region-no-drag space-y-[6px] overflow-hidden">
             {mainNavItems.map((item) =>
@@ -138,7 +108,6 @@ export function Sidebar({
             )}
           </nav>
 
-          {/* Settings pinned to bottom */}
           <div className="pb-4 app-region-no-drag space-y-[6px]">
             {renderNavItem(
               { id: 'settings', icon: Settings },

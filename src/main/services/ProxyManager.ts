@@ -14,7 +14,6 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { resourceManager } from './ResourceManager';
 import { retry } from '../utils/retry';
 import { getUserDataPath } from '../utils/paths';
-import { getAppPreset } from '../../shared/app-rules-preset';
 
 /**
  * 私有 IP 地址段（CIDR 格式）
@@ -327,6 +326,8 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   private lastLogFileSize: number = 0;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly HEALTH_CHECK_INTERVAL = 10000; // 10秒检查一次
+  private static readonly STATUS_CACHE_TTL_MS = 1000;
+  private lastStatusCheck = { pid: -1, running: false, checkedAt: 0 };
 
   // 自动重启相关
   private autoRestartEnabled: boolean = true;
@@ -573,10 +574,24 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     const isTunMode = this.currentConfig?.proxyModeType === 'tun';
     const activePid = isTunMode ? this.singboxPid : this.singboxPid || this.pid;
 
-    // 验证进程是否真正存活
-    const isRunning = activePid !== null && this.isProcessAlive(activePid);
+    // 验证进程是否真正存活（短时间内复用结果，避免高频同步系统命令）
+    let isRunning = false;
+    if (activePid !== null) {
+      const now = Date.now();
+      const shouldReuseCache =
+        this.lastStatusCheck.pid === activePid &&
+        now - this.lastStatusCheck.checkedAt < ProxyManager.STATUS_CACHE_TTL_MS;
+
+      if (shouldReuseCache) {
+        isRunning = this.lastStatusCheck.running;
+      } else {
+        isRunning = this.isProcessAlive(activePid);
+        this.lastStatusCheck = { pid: activePid, running: isRunning, checkedAt: now };
+      }
+    }
 
     if (!isRunning || !activePid) {
+      this.lastStatusCheck = { pid: -1, running: false, checkedAt: Date.now() };
       return {
         running: false,
       };
@@ -933,7 +948,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   /**
-   * 生成 AppRule 路由规则
+   * 生成路由规则
    */
 
   /**
@@ -1015,10 +1030,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
       // 绝杀级修复（多服务器版本）：如果在 应用分流 (App Policy) 中选择了其他节点，那么这些节点的 IP 也必须被排除。
       // 否则，FlowZ 去连接这些次选节点的流量也会回流进入 TUN 产生死循环。
-      const allServerIds = new Set([
-        config.selectedServerId as string,
-        ...(config.appRules || []).map((r) => r.targetServerId),
-      ]);
+      const allServerIds = new Set([config.selectedServerId as string]);
 
       // 去除会导致 macOS 崩溃的 shouldBypassLAN 全局排除逻辑，回到 3.3.18 时代的精简状态
       for (const serverId of allServerIds) {
@@ -1149,7 +1161,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       outbounds.push(mainOutbound);
 
       // 2. 生成自定义规则中指定的目标节点的 Outbound
-      // 遍历所有启用且指定了 targetServerId 的规则（包括 customRules 和 appRules）
+      // 遍历所有启用且指定了 targetServerId 的自定义规则
       const targetServerIds = new Set<string>();
       if (config.customRules) {
         for (const rule of config.customRules) {
@@ -1158,14 +1170,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
           }
         }
       }
-      if (config.appRules) {
-        for (const rule of config.appRules) {
-          if (rule.enabled && rule.action === 'proxy' && rule.targetServerId) {
-            targetServerIds.add(rule.targetServerId);
-          }
-        }
-      }
-
       for (const targetId of Array.from(targetServerIds)) {
         // 如果目标节点就是主节点，不需要额外添加（主节点已有 'proxy' tag）
         if (targetId === selectedServer.id) continue;
@@ -1849,51 +1853,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
         });
       }
 
-      // 应用分流规则（真·应用分流，基于进程名）
-      // 优先级高于后续的智能分流/全局分流，确保特定应用的流量始终走用户指定的出口
-      for (const appRule of config.appRules || []) {
-        if (!appRule.enabled) continue;
-        const preset = getAppPreset(appRule.appId, config.customAppPresets);
-        if (!preset) continue;
-
-        // 确定出站方式
-        let outbound = 'direct';
-        if (appRule.action === 'proxy') {
-          if (appRule.targetServerId && appRule.targetServerId !== config.selectedServerId) {
-            const serverExists = config.servers.some((s) => s.id === appRule.targetServerId);
-            outbound = serverExists
-              ? idToTagMap.get(appRule.targetServerId) || `proxy-${appRule.targetServerId}`
-              : selectedServerTag;
-          } else {
-            outbound = selectedServerTag;
-          }
-        } else if (appRule.action === 'block') {
-          outbound = 'block';
-        }
-
-        // a. 基于进程名的规则（最精准，适用于 macOS/Windows TUN 模式）
-        if (preset.processNames && preset.processNames.length > 0) {
-          rules.push({
-            process_name: preset.processNames,
-            action: 'route',
-            outbound,
-          });
-        }
-
-        // b. 基于原有 rule_set 的规则（兜底，基于域名/IP 识别）
-        const ruleSets = [
-          ...preset.geositeTags.map((tag) => `geosite-${tag}`),
-          ...(preset.geoipTags || []).map((tag) => `geoip-${tag}`),
-        ];
-
-        if (ruleSets.length > 0) {
-          rules.push({
-            rule_set: ruleSets,
-            action: 'route',
-            outbound,
-          });
-        }
-      }
     }
 
     // 【QUIC 阻断】：放在自定义规则和应用分流之后，确保用户的 direct/proxy 规则优先级更高
@@ -1911,7 +1870,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       // 从而让用户以为“所有的海外网站全都打不开了”。我们必须依靠浏览器的原生 fallback，或者直接让 Mac 本机关闭 IPv6 分配。
 
       // 针对 Google 和 YouTube 的关键词兜底规则（仅在未专门设置应用分流时作为备份）
-      // 注意：这些规则在 AppRules 之后，所以不会覆盖用户手动指定的节点
+      // 注意：这些规则在自定义规则之后，保证用户手动指定节点优先
       rules.push({
         domain_keyword: ['google', 'gmail', 'youtube', 'gstatic', 'googleapis', 'googlevideo'],
         action: 'route',
@@ -1968,11 +1927,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
 
     // 添加自定义规则和应用分流所需的 Geosite/GeoIP rule_set
     const { geosite: customGeositeCategories, geoip: customGeoipCategories } =
-      this.getRequiredGeoCategories(
-        config.customRules || [],
-        config.appRules || [],
-        config.customAppPresets || []
-      );
+      this.getRequiredGeoCategories(config.customRules || []);
 
     if (customGeositeCategories.size > 0 || customGeoipCategories.size > 0) {
       if (!routeConfig.rule_set) {
@@ -2021,15 +1976,10 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
   }
 
   /**
-   * 收集自定义规则中使用的 Geosite 类别（同时扫描 customRules 和 appRules）
-   */
-  /**
-   * 收集自定义规则中使用的 Geosite 和 GeoIP 类别（同时扫描 customRules 和 appRules）
+   * 收集自定义规则中使用的 Geosite 和 GeoIP 类别
    */
   private getRequiredGeoCategories(
-    customRules: import('../../shared/types').DomainRule[],
-    appRules: import('../../shared/types').AppRule[] = [],
-    customAppPresets: import('../../shared/types').CustomAppPreset[] = []
+    customRules: import('../../shared/types').DomainRule[]
   ): { geosite: Set<string>; geoip: Set<string> } {
     const geositeCategories = new Set<string>();
     const geoipCategories = new Set<string>();
@@ -2044,17 +1994,6 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
       }
     }
 
-    // 扫描应用分流规则
-    for (const appRule of appRules) {
-      if (!appRule.enabled) continue;
-      const preset = getAppPreset(appRule.appId, customAppPresets);
-      if (preset) {
-        preset.geositeTags.forEach((tag) => geositeCategories.add(tag));
-        if (preset.geoipTags) {
-          preset.geoipTags.forEach((tag) => geoipCategories.add(tag));
-        }
-      }
-    }
     return { geosite: geositeCategories, geoip: geoipCategories };
   }
 
@@ -2870,6 +2809,7 @@ export class ProxyManager extends EventEmitter implements IProxyManager {
     this.pid = null;
     this.singboxPid = null;
     this.startTime = null;
+    this.lastStatusCheck = { pid: -1, running: false, checkedAt: 0 };
   }
 
   /**

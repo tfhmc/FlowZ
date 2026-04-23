@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { useAppStore } from '@/store/app-store';
 import { Trash2, ArrowDown, Search } from 'lucide-react';
-import { getLogs, clearLogs, addEventListener, removeEventListener } from '@/bridge/api-wrapper';
+import { getLogs, clearLogs } from '@/bridge/api-wrapper';
 import type { LogEntry } from '@/bridge/types';
 import { useTranslation } from 'react-i18next';
+import { api } from '@/ipc';
 
 export function RealTimeLogs() {
   const { t } = useTranslation();
@@ -44,10 +45,10 @@ export function RealTimeLogs() {
       });
     };
 
-    addEventListener('logReceived', handleLogReceived);
+    const unsubscribe = api.logs.onReceived(handleLogReceived);
 
     return () => {
-      removeEventListener('logReceived', handleLogReceived);
+      unsubscribe();
     };
   }, []);
 
@@ -135,11 +136,15 @@ export function RealTimeLogs() {
     }
   };
 
-  const filteredLogs = logs.filter(
-    (log) =>
-      log.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.level.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredLogs = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return logs;
+
+    return logs.filter(
+      (log) =>
+        log.message.toLowerCase().includes(keyword) || log.level.toLowerCase().includes(keyword)
+    );
+  }, [logs, searchTerm]);
 
   return (
     <Card>

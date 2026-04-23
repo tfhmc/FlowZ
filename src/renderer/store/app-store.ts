@@ -76,6 +76,19 @@ interface AppState {
   deleteCustomRule: (ruleId: string) => Promise<void>;
 }
 
+function isConnectionStatusEqual(a: ConnectionStatus | null, b: ConnectionStatus): boolean {
+  if (!a) return false;
+  return (
+    a.proxyCore.running === b.proxyCore.running &&
+    a.proxyCore.pid === b.proxyCore.pid &&
+    a.proxyCore.uptime === b.proxyCore.uptime &&
+    a.proxyCore.error === b.proxyCore.error &&
+    a.proxy.enabled === b.proxy.enabled &&
+    a.proxy.server === b.proxy.server &&
+    a.proxyModeType === b.proxyModeType
+  );
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   // Initial State
   currentView: 'home',
@@ -321,7 +334,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         proxyModeType: get().config?.proxyModeType || 'systemProxy',
       };
-      set({ connectionStatus });
+      const prevStatus = get().connectionStatus;
+      if (!isConnectionStatusEqual(prevStatus, connectionStatus)) {
+        set({ connectionStatus });
+      }
     } catch (error) {
       console.error('Failed to refresh connection status:', error);
     }
